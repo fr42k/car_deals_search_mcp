@@ -22,22 +22,22 @@ class CarListing {
     }
 
     format() {
-        let result = `🚗 ${this.title || 'Unknown Vehicle'}`;
-        if (this.price) result += `\n   💰 Price: ${this.price}`;
-        if (this.mileage) result += `\n   📏 Mileage: ${this.mileage}`;
-        if (this.dealRating) result += `\n   ⭐ Deal Rating: ${this.dealRating}`;
+        let result = `${this.title || 'Unknown Vehicle'}`;
+        if (this.price) result += `\n  Price: ${this.price}`;
+        if (this.mileage) result += `\n  Mileage: ${this.mileage}`;
+        if (this.dealRating) result += `\n  Deal Rating: ${this.dealRating}`;
 
         // CarFax badges
         const badges = [];
         if (this.isOneOwner) badges.push('1-Owner');
         if (this.noAccidents) badges.push('No Accidents');
         if (this.personalUse) badges.push('Personal Use');
-        if (badges.length > 0) result += `\n   🏆 CarFax: ${badges.join(' | ')}`;
+        if (badges.length > 0) result += `\n  CarFax: ${badges.join(' | ')}`;
 
-        if (this.dealerName) result += `\n   🏪 Dealer: ${this.dealerName}`;
-        if (this.location) result += `\n   📍 Location: ${this.location}`;
-        if (this.source) result += `\n   🌐 Source: ${this.source}`;
-        if (this.url) result += `\n   🔗 ${this.url}`;
+        if (this.dealerName) result += `\n  Dealer: ${this.dealerName}`;
+        if (this.location) result += `\n  Location: ${this.location}`;
+        if (this.source) result += `\n  Source: ${this.source}`;
+        if (this.url) result += `\n  ${this.url}`;
         return result;
     }
 }
