@@ -1,0 +1,3 @@
+Success! Found 4 listings.
+Time taken: 3.364 seconds
+First listing title: New 2026 Toyota Corolla XSE
