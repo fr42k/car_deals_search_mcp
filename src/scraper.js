@@ -52,21 +52,41 @@ async function launchBrowser() {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-extensions',
+            '--mute-audio'
         ]
+    });
+}
+
+/**
+ * Configure page for performance (block resources, etc.)
+ */
+async function optimizePage(page) {
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+        const resourceType = req.resourceType();
+        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+            req.abort();
+        } else {
+            req.continue();
+        }
     });
 }
 
 /**
  * Scrape Cars.com for car listings
  */
-async function scrapeCarscom(params, maxResults = 20) {
+async function scrapeCarscom(params, maxResults = 20, existingBrowser = null) {
     const listings = [];
     let browser;
+    let page;
 
     try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
+        browser = existingBrowser || await launchBrowser();
+        page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
+        await optimizePage(page);
         await page.setViewport({ width: 1920, height: 1080 });
 
         // Build URL
@@ -89,7 +109,12 @@ async function scrapeCarscom(params, maxResults = 20) {
         url += urlParams.toString();
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
+
+        try {
+            await page.waitForSelector('.vehicle-card', { timeout: 10000 });
+        } catch (e) {
+            // Continue if timeout, might be no results or different structure
+        }
 
         // Extract listings from .vehicle-card elements
         const rawListings = await page.evaluate(() => {
@@ -189,9 +214,11 @@ async function scrapeCarscom(params, maxResults = 20) {
             }));
         }
 
-        await browser.close();
+        await page.close();
+        if (!existingBrowser) await browser.close();
     } catch (err) {
-        if (browser) await browser.close();
+        if (page) await page.close().catch(() => { });
+        if (browser && !existingBrowser) await browser.close().catch(() => { });
         throw new Error(`Cars.com scraping failed: ${err.message}`);
     }
 
@@ -201,14 +228,16 @@ async function scrapeCarscom(params, maxResults = 20) {
 /**
  * Scrape Autotrader for car listings
  */
-async function scrapeAutotrader(params, maxResults = 20) {
+async function scrapeAutotrader(params, maxResults = 20, existingBrowser = null) {
     const listings = [];
     let browser;
+    let page;
 
     try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
+        browser = existingBrowser || await launchBrowser();
+        page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
+        await optimizePage(page);
 
         // Build URL
         const make = params.make ? params.make.toLowerCase() : '';
@@ -232,7 +261,12 @@ async function scrapeAutotrader(params, maxResults = 20) {
         }
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
+
+        try {
+            await page.waitForSelector('[data-cmp="inventoryListing"], .inventory-listing', { timeout: 10000 });
+        } catch (e) {
+            // Continue
+        }
 
         // Extract listings
         const rawListings = await page.evaluate(() => {
@@ -284,9 +318,11 @@ async function scrapeAutotrader(params, maxResults = 20) {
             }));
         }
 
-        await browser.close();
+        await page.close();
+        if (!existingBrowser) await browser.close();
     } catch (err) {
-        if (browser) await browser.close();
+        if (page) await page.close().catch(() => { });
+        if (browser && !existingBrowser) await browser.close().catch(() => { });
         throw new Error(`Autotrader scraping failed: ${err.message}`);
     }
 
@@ -296,14 +332,16 @@ async function scrapeAutotrader(params, maxResults = 20) {
 /**
  * Scrape KBB for car listings
  */
-async function scrapeKBB(params, maxResults = 20) {
+async function scrapeKBB(params, maxResults = 20, existingBrowser = null) {
     const listings = [];
     let browser;
+    let page;
 
     try {
-        browser = await launchBrowser();
-        const page = await browser.newPage();
+        browser = existingBrowser || await launchBrowser();
+        page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
+        await optimizePage(page);
 
         // Build URL
         const make = params.make ? params.make.toLowerCase() : '';
@@ -322,7 +360,12 @@ async function scrapeKBB(params, maxResults = 20) {
         if (params.mileageMax) url += `&maxMileage=${params.mileageMax}`;
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 5000));
+
+        try {
+            await page.waitForSelector('[data-cmp="inventoryListing"], [class*="inventory-listing"]', { timeout: 10000 });
+        } catch (e) {
+            // Continue
+        }
 
         // Extract listings - KBB uses inventoryListing data-cmp
         const rawListings = await page.evaluate(() => {
@@ -396,9 +439,11 @@ async function scrapeKBB(params, maxResults = 20) {
             }));
         }
 
-        await browser.close();
+        await page.close();
+        if (!existingBrowser) await browser.close();
     } catch (err) {
-        if (browser) await browser.close();
+        if (page) await page.close().catch(() => { });
+        if (browser && !existingBrowser) await browser.close().catch(() => { });
         throw new Error(`KBB scraping failed: ${err.message}`);
     }
 
@@ -408,20 +453,28 @@ async function scrapeKBB(params, maxResults = 20) {
 /**
  * Search all sources and combine results
  */
-async function searchAllSources(params, maxResultsPerSource = 10) {
+async function searchAllSources(params, maxResultsPerSource = 10, sources = null) {
     const results = {
         listings: [],
         errors: []
     };
 
-    // Run scrapers in parallel
-    const scrapers = [
-        { name: 'Cars.com', fn: () => scrapeCarscom(params, maxResultsPerSource) },
-        { name: 'Autotrader', fn: () => scrapeAutotrader(params, maxResultsPerSource) },
-        { name: 'KBB', fn: () => scrapeKBB(params, maxResultsPerSource) }
+    // Launch a shared browser instance
+    const browser = await launchBrowser();
+
+    // Define all available scrapers
+    const allScrapers = [
+        { id: 'cars.com', name: 'Cars.com', fn: () => scrapeCarscom(params, maxResultsPerSource, browser) },
+        { id: 'autotrader', name: 'Autotrader', fn: () => scrapeAutotrader(params, maxResultsPerSource, browser) },
+        { id: 'kbb', name: 'KBB', fn: () => scrapeKBB(params, maxResultsPerSource, browser) }
     ];
 
-    const promises = scrapers.map(async scraper => {
+    // Filter scrapers if sources provided
+    const scrapersToRun = sources
+        ? allScrapers.filter(s => sources.includes(s.id))
+        : allScrapers;
+
+    const promises = scrapersToRun.map(async scraper => {
         try {
             const listings = await scraper.fn();
             return { name: scraper.name, listings, error: null };
@@ -430,13 +483,17 @@ async function searchAllSources(params, maxResultsPerSource = 10) {
         }
     });
 
-    const outcomes = await Promise.all(promises);
+    try {
+        const outcomes = await Promise.all(promises);
 
-    for (const outcome of outcomes) {
-        results.listings.push(...outcome.listings);
-        if (outcome.error) {
-            results.errors.push({ source: outcome.name, error: outcome.error });
+        for (const outcome of outcomes) {
+            results.listings.push(...outcome.listings);
+            if (outcome.error) {
+                results.errors.push({ source: outcome.name, error: outcome.error });
+            }
         }
+    } finally {
+        if (browser) await browser.close();
     }
 
     return results;

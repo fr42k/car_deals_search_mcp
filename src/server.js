@@ -15,6 +15,9 @@ const {
 
 const { searchAllSources, scrapeCarscom, scrapeAutotrader, scrapeKBB } = require('./scraper.js');
 
+// Cache for search results
+const searchCache = new Map();
+
 // Create server instance
 const server = new Server(
     {
@@ -115,72 +118,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 personalUse: args.personalUse,
             };
             const maxResults = args.maxResults || 10;
-            // Default to just cars.com for reliability
-            const sources = args.sources || ['cars.com'];
+            const sources = args.sources || ['cars.com', 'autotrader', 'kbb'];
+
+            // Simple in-memory cache
+            const cacheKey = JSON.stringify({ params, maxResults, sources });
+            const cached = searchCache.get(cacheKey);
+            if (cached && (Date.now() - cached.timestamp < 300000)) { // 5 min TTL
+                console.error(`[MCP] Returning cached results for ${cacheKey}`);
+                return cached.response;
+            }
 
             console.error(`[MCP] Searching for ${params.make} ${params.model} in ${params.zip}`);
             console.error(`[MCP] Sources: ${sources.join(', ')}, Max: ${maxResults}`);
 
-            let allListings = [];
-            let errors = [];
+            // Use optimized search function with shared browser
+            const searchResults = await searchAllSources(params, maxResults, sources);
 
-            // Run selected scrapers
-            const scraperPromises = [];
-
-            if (sources.includes('cars.com')) {
-                console.error('[MCP] Starting Cars.com scraper...');
-                scraperPromises.push(
-                    scrapeCarscom(params, maxResults)
-                        .then(listings => {
-                            console.error(`[MCP] Cars.com returned ${listings.length} listings`);
-                            return { source: 'Cars.com', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] Cars.com error: ${err.message}`);
-                            return { source: 'Cars.com', error: err.message, listings: [] };
-                        })
-                );
-            }
-
-            if (sources.includes('autotrader')) {
-                console.error('[MCP] Starting Autotrader scraper...');
-                scraperPromises.push(
-                    scrapeAutotrader(params, maxResults)
-                        .then(listings => {
-                            console.error(`[MCP] Autotrader returned ${listings.length} listings`);
-                            return { source: 'Autotrader', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] Autotrader error: ${err.message}`);
-                            return { source: 'Autotrader', error: err.message, listings: [] };
-                        })
-                );
-            }
-
-            if (sources.includes('kbb')) {
-                console.error('[MCP] Starting KBB scraper...');
-                scraperPromises.push(
-                    scrapeKBB(params, maxResults)
-                        .then(listings => {
-                            console.error(`[MCP] KBB returned ${listings.length} listings`);
-                            return { source: 'KBB', listings };
-                        })
-                        .catch(err => {
-                            console.error(`[MCP] KBB error: ${err.message}`);
-                            return { source: 'KBB', error: err.message, listings: [] };
-                        })
-                );
-            }
-
-            const results = await Promise.all(scraperPromises);
-            console.error(`[MCP] All scrapers completed`);
-
-            for (const result of results) {
-                allListings.push(...result.listings);
-                if (result.error) {
-                    errors.push(`${result.source}: ${result.error}`);
-                }
-            }
+            const allListings = searchResults.listings;
+            const errors = searchResults.errors.map(e => `${e.source}: ${e.error}`);
 
             console.error(`[MCP] Total listings: ${allListings.length}`);
 
@@ -219,7 +174,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
-            return {
+            const response = {
                 content: [
                     {
                         type: 'text',
@@ -227,6 +182,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     },
                 ],
             };
+
+            // Cache the response
+            searchCache.set(cacheKey, { timestamp: Date.now(), response });
+
+            return response;
         } catch (error) {
             return {
                 content: [
