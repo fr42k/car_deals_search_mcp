@@ -247,7 +247,7 @@ async function scrapeAutotrader(params, maxResults = 20, existingBrowser = null)
         let url = `https://www.autotrader.com/cars-for-sale/all-cars`;
         if (make) url += `/${make}`;
         if (model) url += `/${model}`;
-        url += `/beverly-hills-ca-${zip}`;
+        url += `/jersey-city-nj-${zip}`;
 
         // Add query params
         const urlParams = new URLSearchParams();
